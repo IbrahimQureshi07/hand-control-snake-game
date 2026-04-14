@@ -1,7 +1,9 @@
+import math
 import tkinter as tk
 import random
 import time
 import urllib.request
+from collections import Counter, deque
 from pathlib import Path
 
 # Hand control imports (only needed when CONTROL_MODE = 'hand')
@@ -9,7 +11,6 @@ from pathlib import Path
 try:
     import cv2
     import mediapipe as mp
-    import numpy as np
     _ = mp.tasks.vision.HandLandmarker
     HAND_CONTROL_AVAILABLE = True
 except ImportError:
@@ -26,7 +27,8 @@ HAND_MODEL_URL = (
 
 def ensure_hand_landmarker_model() -> Path:
     """Download Google's hand_landmarker.task if missing (one-time, ~few MB)."""
-    model_dir = Path(__file__).resolve().parent / "models"
+    # Repo root /models (this file lives in /src)
+    model_dir = Path(__file__).resolve().parent.parent / "models"
     model_dir.mkdir(parents=True, exist_ok=True)
     path = model_dir / "hand_landmarker.task"
     if path.is_file() and path.stat().st_size > 100_000:
@@ -65,6 +67,40 @@ UP = (0, -1)
 DOWN = (0, 1)
 LEFT = (-1, 0)
 RIGHT = (1, 0)
+
+# Hand control tuning (index MCP → tip vector, normalized 0–1 coords)
+HAND_MIN_POINT_NORM = 0.028  # ignore tiny / collapsed finger poses
+HAND_SMOOTH_MAXLEN = 3       # majority over last N frames reduces jitter
+
+def _direction_from_pointing_vector(dx: float, dy: float):
+    """
+    Map pointing vector (index MCP → tip) to UP/DOWN/LEFT/RIGHT using atan2 sectors.
+    Uses equal 90° quadrants so left/right feel symmetric vs axis-only thresholds.
+    """
+    if math.hypot(dx, dy) < HAND_MIN_POINT_NORM:
+        return None
+    a = math.atan2(dy, dx)
+    if -math.pi / 4 <= a <= math.pi / 4:
+        return RIGHT
+    if math.pi / 4 < a < 3 * math.pi / 4:
+        return DOWN
+    if a >= 3 * math.pi / 4 or a <= -3 * math.pi / 4:
+        return LEFT
+    return UP
+
+
+def _smooth_hand_direction(buffer: deque, raw):
+    """Majority of recent non-None readings; tie → latest (responsive)."""
+    buffer.append(raw)
+    vals = [d for d in buffer if d is not None]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        return vals[0]
+    best, cnt = Counter(vals).most_common(1)[0]
+    if cnt >= 2:
+        return best
+    return vals[-1]
 
 class Snake:
     def __init__(self):
@@ -153,7 +189,7 @@ class Game:
         self.cap = None
         self.hand_landmarker = None
         self._hand_frame_ts_ms = 0
-        self.last_direction = None
+        self._hand_vote_buffer = deque(maxlen=HAND_SMOOTH_MAXLEN)
         
         if CONTROL_MODE == 'hand':
             if not self.init_hand_control():
@@ -195,18 +231,16 @@ class Game:
                 base_options=BaseOptions(model_asset_path=model_path),
                 running_mode=VisionRunningMode.VIDEO,
                 num_hands=1,
-                min_hand_detection_confidence=0.6,
-                min_hand_presence_confidence=0.5,
-                min_tracking_confidence=0.5,
+                min_hand_detection_confidence=0.5,
+                min_hand_presence_confidence=0.45,
+                min_tracking_confidence=0.45,
             )
             self.hand_landmarker = HandLandmarker.create_from_options(options)
             self._hand_frame_ts_ms = 0
-            
-            self.last_direction = None
-            self.direction_change_threshold = 30  # pixels (index tip vs wrist)
+            self._hand_vote_buffer.clear()
             
             print("Hand control initialized (MediaPipe Tasks + webcam).")
-            print("- Show one hand; point index finger relative to wrist to steer.")
+            print("- Point index finger (knuckle to tip) in the air — angle picks direction.")
             print("=" * 50)
             return True
         except Exception as e:
@@ -244,50 +278,34 @@ class Game:
         return None
     
     def get_hand_direction(self):
-        """Get direction from hand gesture using MediaPipe Hand Landmarker (Tasks)."""
+        """Index MCP → index tip vector, atan2 sectors, smoothed over recent frames."""
         if not HAND_CONTROL_AVAILABLE or self.cap is None or self.hand_landmarker is None:
             return None
         
         try:
             ret, frame = self.cap.read()
             if not ret or frame is None:
-                return None
-            
-            frame = cv2.flip(frame, 1)
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            self._hand_frame_ts_ms += 33
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
-            result = self.hand_landmarker.detect_for_video(mp_image, self._hand_frame_ts_ms)
-            
-            if not result.hand_landmarks:
-                return None
-            
-            lm = result.hand_landmarks[0]
-            wrist = lm[0]
-            index_tip = lm[8]
-            
-            h, w, _ = frame.shape
-            wrist_x = wrist.x * w
-            wrist_y = wrist.y * h
-            index_x = index_tip.x * w
-            index_y = index_tip.y * h
-            
-            dx = index_x - wrist_x
-            dy = index_y - wrist_y
-            
-            if abs(dx) > abs(dy):
-                if dx > self.direction_change_threshold:
-                    return RIGHT
-                if dx < -self.direction_change_threshold:
-                    return LEFT
+                raw = None
             else:
-                if dy > self.direction_change_threshold:
-                    return DOWN
-                if dy < -self.direction_change_threshold:
-                    return UP
+                frame = cv2.flip(frame, 1)
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                self._hand_frame_ts_ms += 33
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+                result = self.hand_landmarker.detect_for_video(mp_image, self._hand_frame_ts_ms)
+                
+                if not result.hand_landmarks:
+                    raw = None
+                else:
+                    lm = result.hand_landmarks[0]
+                    # INDEX_FINGER_MCP (5) → INDEX_FINGER_TIP (8): stable "pointing" direction
+                    mcp = lm[5]
+                    tip = lm[8]
+                    dx = tip.x - mcp.x
+                    dy = tip.y - mcp.y
+                    raw = _direction_from_pointing_vector(dx, dy)
             
-            return None
+            return _smooth_hand_direction(self._hand_vote_buffer, raw)
         except Exception as e:
             print(f"Error in hand detection: {e}")
             return None

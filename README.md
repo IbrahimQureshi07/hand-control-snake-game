@@ -1,72 +1,58 @@
-# Camera Test Script
+# Hand-Control Snake Game
 
-A simple Python script to test if your laptop camera is working using OpenCV.
+Desktop Snake game with **optional hand tracking** (webcam + MediaPipe) or **keyboard** (arrow keys). Built with Python, Tkinter, OpenCV, and MediaPipe Tasks API.
 
-## How to Use
+## Project layout
 
-1. **Install OpenCV** (if you haven't already):
-   ```
-   pip install opencv-python
-   ```
+```
+├── src/                    # Main game code
+│   ├── snake_game_tkinter.py   # Recommended: Tkinter + hand or keyboard
+│   └── snake_game.py           # Optional: Pygame + keyboard
+├── tools/                  # Camera utilities (optional)
+│   ├── test_camera.py
+│   └── check_camera_detailed.py
+├── models/                 # Auto-downloaded on first run (gitignored)
+│   └── hand_landmarker.task
+├── requirements.txt
+└── README.md
+```
 
-2. **Run the script**:
-   ```
-   python test_camera.py
-   ```
+## Setup
 
-3. **Press 'q' to quit** the camera window
+```bash
+pip install -r requirements.txt
+```
 
-## What the Script Does
+Hand mode downloads `hand_landmarker.task` into `models/` on first run (internet required once).
 
-- Opens your default camera (usually camera 0)
-- Shows a live video feed in a window
-- Allows you to quit by pressing 'q'
+## Run
 
-## Troubleshooting: Camera Won't Open
+From the project root:
 
-### Problem 1: "Could not open camera" error
+```bash
+python src/snake_game_tkinter.py
+```
 
-**Solution 1: Check if camera is being used**
-- Close other programs that might be using the camera (Zoom, Teams, Skype, etc.)
-- Close any browser tabs that might be accessing the camera
+**Pygame variant** (install pygame first):
 
-**Solution 2: Try a different camera index**
-- If you have multiple cameras, edit the script and change `VideoCapture(0)` to `VideoCapture(1)` or `VideoCapture(2)`
+```bash
+pip install pygame
+python src/snake_game.py
+```
 
-**Solution 3: Windows Privacy Settings**
-- Go to: Settings > Privacy > Camera
-- Make sure "Allow apps to access your camera" is ON
-- Make sure "Allow desktop apps to access your camera" is ON (important!)
+**Test camera only:**
 
-**Solution 4: Check camera drivers**
-- Open Device Manager (search in Start menu)
-- Look under "Cameras" or "Imaging devices"
-- If you see a yellow warning icon, update the drivers
+```bash
+python tools/test_camera.py
+```
 
-**Solution 5: Restart your computer**
-- Sometimes a simple restart fixes camera issues
+## Controls
 
-### Problem 2: Black screen or no video
+- **Hand mode** (default in `snake_game_tkinter.py`): point your index finger — see in-file `CONTROL_MODE`.
+- **Keyboard**: arrow keys; **R** to restart after game over.
+- Windows: allow **desktop apps** to use the camera in **Settings → Privacy → Camera**.
 
-**Solution:**
-- Make sure nothing is covering your camera lens
-- Check if the camera LED light is on (if your laptop has one)
-- Try the script again after closing other programs
+## Requirements
 
-### Problem 3: "ModuleNotFoundError: No module named 'cv2'"
-
-**Solution:**
-- Install OpenCV: `pip install opencv-python`
-- If that doesn't work, try: `pip3 install opencv-python`
-
-## Understanding the Code (For Beginners)
-
-- `cv2.VideoCapture(0)` - Opens camera number 0 (your default camera)
-- `cap.read()` - Takes a photo (frame) from the camera
-- `cv2.imshow()` - Shows the photo in a window
-- `cv2.waitKey(1)` - Waits for keyboard input (checks if 'q' was pressed)
-- `cap.release()` - Closes the camera so other programs can use it
-
-
-
-
+- Python 3.10+
+- Webcam for hand mode
