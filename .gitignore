@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+
+# Downloaded on first run (see snake_game_tkinter.py)
+models/*.task
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
